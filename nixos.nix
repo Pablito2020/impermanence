@@ -311,6 +311,36 @@ let
         };
       };
     };
+
+  useSystemdActivation = (options.systemd ? sysusers && config.systemd.sysusers.enable) ||
+    (options.services ? userborn && config.services.userborn.enable);
+
+  systemdServices = (map mkPersistFileService files) ++ lib.optional useSystemdActivation {
+    "persist-storage-dirs" = {
+      description = "Create persistent storage directories";
+      wantedBy = [ "sysinit.target" ];
+      after = [ "systemd-sysusers.service" ];
+      path = [ pkgs.util-linux ];
+      unitConfig.DefaultDependencies = false;
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = dirCreationScript;
+      };
+    };
+    "persist-files" = {
+      description = "Persist files to persistent storage";
+      wantedBy = [ "sysinit.target" ];
+      after = [ "systemd-sysusers.service" "persist-storage-dirs.service" ];
+      path = [ pkgs.util-linux ];
+      unitConfig.DefaultDependencies = false;
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = persistFileScript;
+      };
+    };
+  };
 in
 {
   options = {
@@ -434,7 +464,7 @@ in
       (mkIf (allPersistentStoragePaths != { })
         (mkMerge [
           {
-            systemd.services = foldl' recursiveUpdate { } (map mkPersistFileService files);
+            systemd.services = foldl' recursiveUpdate { } systemdServices;
 
             boot.initrd.systemd.mounts =
               let
@@ -477,7 +507,7 @@ in
               in
               map mkBindMount directories;
 
-            system.activationScripts = activationScripts;
+            system.activationScripts = lib.mkIf (!useSystemdActivation) activationScripts;
 
             boot.initrd.postMountCommands =
               let
